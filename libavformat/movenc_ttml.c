@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/mem.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "isom.h"
@@ -70,9 +71,7 @@ static int mov_write_ttml_document_from_queue(AVFormatContext *s,
         return ret;
     }
 
-    while (!avpriv_packet_list_get(&track->squashed_packet_queue,
-                                   &track->squashed_packet_queue_end,
-                                   pkt)) {
+    while (!avpriv_packet_list_get(&track->squashed_packet_queue, pkt)) {
         end_ts = FFMAX(end_ts, pkt->pts + pkt->duration);
 
         // in case of the 'dfxp' muxing mode, each written document is offset
@@ -121,7 +120,7 @@ int ff_mov_generate_squashed_ttml_packet(AVFormatContext *s,
         goto cleanup;
     }
 
-    if (!track->squashed_packet_queue) {
+    if (!track->squashed_packet_queue.head) {
         // empty queue, write minimal empty document with zero duration
         avio_write(ttml_ctx->pb, empty_ttml_document,
                    sizeof(empty_ttml_document) - 1);

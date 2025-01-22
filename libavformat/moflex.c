@@ -24,6 +24,7 @@
 #include "libavcodec/bytestream.h"
 
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct BitReader {
@@ -172,7 +173,7 @@ static int moflex_read_sync(AVFormatContext *s)
         unsigned type, ssize, codec_id = 0;
         unsigned codec_type, width = 0, height = 0, sample_rate = 0, channels = 0;
         int stream_index = -1;
-        AVRational fps;
+        AVRational tb = av_make_q(0, 1);
 
         read_var_byte(s, &type);
         read_var_byte(s, &ssize);
@@ -195,6 +196,7 @@ static int moflex_read_sync(AVFormatContext *s)
                 return AVERROR_PATCHWELCOME;
             }
             sample_rate = avio_rb24(pb) + 1;
+            tb = av_make_q(1, sample_rate);
             channels = avio_r8(pb) + 1;
             break;
         case 1:
@@ -208,8 +210,8 @@ static int moflex_read_sync(AVFormatContext *s)
                 av_log(s, AV_LOG_ERROR, "Unsupported video codec: %d\n", codec_id);
                 return AVERROR_PATCHWELCOME;
             }
-            fps.num = avio_rb16(pb);
-            fps.den = avio_rb16(pb);
+            tb.den = avio_rb16(pb);
+            tb.num = avio_rb16(pb);
             width = avio_rb16(pb);
             height = avio_rb16(pb);
             avio_skip(pb, type == 3 ? 3 : 2);
@@ -232,15 +234,13 @@ static int moflex_read_sync(AVFormatContext *s)
             st->codecpar->width      = width;
             st->codecpar->height     = height;
             st->codecpar->sample_rate= sample_rate;
-            st->codecpar->channels   = channels;
+            st->codecpar->ch_layout.nb_channels = channels;
             st->priv_data            = av_packet_alloc();
             if (!st->priv_data)
                 return AVERROR(ENOMEM);
 
-            if (sample_rate)
-                avpriv_set_pts_info(st, 63, 1, sample_rate);
-            else
-                avpriv_set_pts_info(st, 63, fps.den, fps.num);
+            if (tb.num)
+                avpriv_set_pts_info(st, 63, tb.num, tb.den);
         }
     }
 
@@ -372,15 +372,16 @@ static int moflex_read_close(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_moflex_demuxer = {
-    .name           = "moflex",
-    .long_name      = NULL_IF_CONFIG_SMALL("MobiClip MOFLEX"),
+const FFInputFormat ff_moflex_demuxer = {
+    .p.name         = "moflex",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("MobiClip MOFLEX"),
+    .p.extensions   = "moflex",
+    .p.flags        = AVFMT_GENERIC_INDEX,
     .priv_data_size = sizeof(MOFLEXDemuxContext),
     .read_probe     = moflex_probe,
     .read_header    = moflex_read_header,
     .read_packet    = moflex_read_packet,
     .read_seek      = moflex_read_seek,
     .read_close     = moflex_read_close,
-    .extensions     = "moflex",
-    .flags          = AVFMT_GENERIC_INDEX,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
 };

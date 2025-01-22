@@ -24,9 +24,11 @@
  * GEM Raster image decoder
  */
 
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bytestream.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 
 static const uint32_t gem_color_palette[16]={
     0xFFFFFFFF, 0xFFFF0000, 0xFF00FF00, 0xFFFFFF00,
@@ -84,14 +86,12 @@ static void put_lines_bytes(AVCodecContext *avctx, int planes, int row_width, in
     state->vdup = 1;
 }
 
-static int gem_decode_frame(AVCodecContext *avctx,
-                            void *data, int *got_frame,
-                            AVPacket *avpkt)
+static int gem_decode_frame(AVCodecContext *avctx, AVFrame *p,
+                            int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf     = avpkt->data;
     int buf_size           = avpkt->size;
     const uint8_t *buf_end = buf + buf_size;
-    AVFrame *p             = data;
     int header_size, planes, pattern_size, tag = 0, count_scalar = 1, ret;
     unsigned int x, count, v;
     GetByteContext gb;
@@ -157,12 +157,36 @@ static int gem_decode_frame(AVCodecContext *avctx,
     if (header_size >= 11)
         tag = bytestream2_peek_be32(&gb);
 
+    if (tag == AV_RB32("STTT")) {
+        if (planes != 4) {
+            avpriv_request_sample(avctx, "STTT planes=%d", planes);
+            return AVERROR_PATCHWELCOME;
+        }
+    } else if (tag == AV_RB32("TIMG")) {
+        if (planes != 15) {
+            avpriv_request_sample(avctx, "TIMG planes=%d", planes);
+            return AVERROR_PATCHWELCOME;
+        }
+    } else if (tag == AV_RB32("XIMG")) {
+        if (planes != 1 && planes != 2 && planes != 4 && planes != 8 && planes != 16 && planes != 24 && planes != 32) {
+            avpriv_request_sample(avctx, "XIMG planes=%d", planes);
+            return AVERROR_PATCHWELCOME;
+        }
+    } else if (planes != 1 && planes != 2 && planes != 3 && planes != 4 && planes != 8 && planes != 16 && planes != 24) {
+        avpriv_request_sample(avctx, "planes=%d", planes);
+        return AVERROR_PATCHWELCOME;
+    }
+
     if ((ret = ff_get_buffer(avctx, p, 0)) < 0)
         return ret;
 
     p->pict_type = AV_PICTURE_TYPE_I;
-    p->key_frame = 1;
+    p->flags |= AV_FRAME_FLAG_KEY;
+#if FF_API_PALETTE_HAS_CHANGED
+FF_DISABLE_DEPRECATION_WARNINGS
     p->palette_has_changed = 1;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     palette = (uint32_t  *)p->data[1];
 
     if (tag == AV_RB32("STTT")) {
@@ -176,14 +200,12 @@ static int gem_decode_frame(AVCodecContext *avctx,
                 palette[i] = 0xFF000000 | r << 16 | g << 8 | b;
             }
         } else {
-            avpriv_request_sample(avctx, "STTT planes=%d", planes);
-            return AVERROR_PATCHWELCOME;
+            av_assert0(0);
         }
     } else if (tag == AV_RB32("TIMG")) {
         bytestream2_skip(&gb, 4);
         if (planes != 15) {
-            avpriv_request_sample(avctx, "TIMG planes=%d", planes);
-            return AVERROR_PATCHWELCOME;
+            av_assert0(0);
         }
     } else if (tag == AV_RB32("XIMG")) {
         bytestream2_skip(&gb, 6);
@@ -207,8 +229,7 @@ static int gem_decode_frame(AVCodecContext *avctx,
             row_width = avctx->width * pixel_size;
             put_lines = put_lines_bytes;
         } else {
-            avpriv_request_sample(avctx, "XIMG planes=%d", planes);
-            return AVERROR_PATCHWELCOME;
+            av_assert0(0);
         }
     } else if (planes == 1) {
         palette[0] = 0xFFFFFFFF;
@@ -236,10 +257,8 @@ static int gem_decode_frame(AVCodecContext *avctx,
         planes = 1;
         row_width = avctx->width * pixel_size;
         put_lines = put_lines_bytes;
-    } else {
-        avpriv_request_sample(avctx, "planes=%d", planes);
-        return AVERROR_PATCHWELCOME;
-    }
+    } else
+        av_assert0(0);
 
     ret = av_reallocp_array(&avctx->priv_data, planes, row_width);
     if (ret < 0)
@@ -336,12 +355,12 @@ static av_cold int gem_close(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_gem_decoder = {
-    .name           = "gem",
-    .long_name      = NULL_IF_CONFIG_SMALL("GEM Raster image"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_GEM,
-    .decode         = gem_decode_frame,
+const FFCodec ff_gem_decoder = {
+    .p.name         = "gem",
+    CODEC_LONG_NAME("GEM Raster image"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_GEM,
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(gem_decode_frame),
     .close          = gem_close,
-    .capabilities   = AV_CODEC_CAP_DR1,
 };

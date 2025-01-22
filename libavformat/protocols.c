@@ -16,13 +16,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "config.h"
+#include <string.h>
 
 #include "libavutil/avstring.h"
+#include "libavutil/log.h"
 #include "libavutil/mem.h"
 
 #include "url.h"
 
+extern const URLProtocol ff_android_content_protocol;
 extern const URLProtocol ff_async_protocol;
 extern const URLProtocol ff_bluray_protocol;
 extern const URLProtocol ff_cache_protocol;
@@ -30,6 +32,7 @@ extern const URLProtocol ff_concat_protocol;
 extern const URLProtocol ff_concatf_protocol;
 extern const URLProtocol ff_crypto_protocol;
 extern const URLProtocol ff_data_protocol;
+extern const URLProtocol ff_fd_protocol;
 extern const URLProtocol ff_ffrtmpcrypt_protocol;
 extern const URLProtocol ff_ffrtmphttp_protocol;
 extern const URLProtocol ff_file_protocol;
@@ -73,6 +76,8 @@ extern const URLProtocol ff_libsrt_protocol;
 extern const URLProtocol ff_libssh_protocol;
 extern const URLProtocol ff_libsmbclient_protocol;
 extern const URLProtocol ff_libzmq_protocol;
+extern const URLProtocol ff_ipfs_gateway_protocol;
+extern const URLProtocol ff_ipns_gateway_protocol;
 
 #include "libavformat/protocol_list.c"
 
@@ -93,17 +98,17 @@ const AVClass *ff_urlcontext_child_class_iterate(void **iter)
 
 const char *avio_enum_protocols(void **opaque, int output)
 {
-    const URLProtocol **p = *opaque;
+    uintptr_t i;
 
-    p = p ? p + 1 : url_protocols;
-    *opaque = p;
-    if (!*p) {
-        *opaque = NULL;
-        return NULL;
+    for (i = (uintptr_t)*opaque; url_protocols[i]; i++) {
+        const URLProtocol *p = url_protocols[i];
+        if ((output && p->url_write) || (!output && p->url_read)) {
+            *opaque = (void*)(uintptr_t)(i + 1);
+            return p->name;
+        }
     }
-    if ((output && (*p)->url_write) || (!output && (*p)->url_read))
-        return (*p)->name;
-    return avio_enum_protocols(opaque, output);
+    *opaque = NULL;
+    return NULL;
 }
 
 const AVClass *avio_protocol_get_class(const char *name)
